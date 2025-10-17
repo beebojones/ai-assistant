@@ -1,4 +1,4 @@
-name = "ai-assistant-backend"
+name = "ai-assistant"
 main = "src/index.ts"
 compatibility_date = "2024-10-01"
 
