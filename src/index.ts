@@ -34,7 +34,7 @@ function getCookie(req: Request, name: string): string | undefined {
   return undefined
 }
 
-function setCookie(headers: Headers, name: string, value: string, opts: { httpOnly?: boolean; secure?: boolean; path?: string; maxAge?: number } = {}) {
+function buildCookie(name: string, value: string, opts: { httpOnly?: boolean; secure?: boolean; path?: string; maxAge?: number } = {}) {
   const attrs = [
     `${name}=${encodeURIComponent(value)}`,
     `Path=${opts.path ?? '/'}`,
@@ -43,7 +43,7 @@ function setCookie(headers: Headers, name: string, value: string, opts: { httpOn
     opts.maxAge ? `Max-Age=${opts.maxAge}` : '',
     'SameSite=Lax',
   ].filter(Boolean)
-  headers.append('Set-Cookie', attrs.join('; '))
+  return attrs.join('; ')
 }
 
 app.get('/auth/google', async (c) => {
@@ -53,7 +53,7 @@ app.get('/auth/google', async (c) => {
   const origin = new URL(c.req.url).origin
   const redirectUri = `${origin}${redirectPath}`
   const url = getAuthUrl({ clientId: GOOGLE_CLIENT_ID, redirectUri, state })
-  setCookie(c.header(), 'oauth_state', state, { httpOnly: true, secure: true, path: '/', maxAge: 600 })
+c.header('Set-Cookie', buildCookie('oauth_state', state, { httpOnly: true, secure: true, path: '/', maxAge: 600 }), { append: true })
   return c.redirect(url)
 })
 
@@ -80,8 +80,8 @@ app.get('/oauth2/callback', async (c) => {
     access_token: tokens.access_token,
     expires_in: tokens.expires_in,
   })
-  setCookie(c.header(), 'uid', userinfo.email, { httpOnly: true, secure: true, path: '/', maxAge: 60 * 60 * 24 * 30 })
-  setCookie(c.header(), 'oauth_state', '', { httpOnly: true, secure: true, path: '/', maxAge: 0 })
+c.header('Set-Cookie', buildCookie('uid', userinfo.email, { httpOnly: true, secure: true, path: '/', maxAge: 60 * 60 * 24 * 30 }), { append: true })
+  c.header('Set-Cookie', buildCookie('oauth_state', '', { httpOnly: true, secure: true, path: '/', maxAge: 0 }), { append: true })
   return c.text('Authenticated. You can now call /api/calendar endpoints.', 200)
 })
 
