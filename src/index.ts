@@ -76,8 +76,14 @@ app.get('/oauth2/callback', async (c) => {
     redirectUri,
   })
   const userinfo = await getUserInfo(tokens.access_token)
+  // Handle case where Google does not return a refresh_token (happens after first consent)
+  const existing = await getUserByEmail(DB, userinfo.email)
+  const refreshToken = tokens.refresh_token || existing?.google_refresh_token
+  if (!refreshToken) {
+    return c.text('No refresh token. Remove app access at myaccount.google.com/permissions and retry.', 400)
+  }
   await upsertUserByEmail(DB, userinfo.email, {
-    refresh_token: tokens.refresh_token!,
+    refresh_token: refreshToken,
     access_token: tokens.access_token,
     expires_in: tokens.expires_in,
   })

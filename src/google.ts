@@ -10,7 +10,8 @@ const GOOGLE_OAUTH_AUTH = 'https://accounts.google.com/o/oauth2/v2/auth'
 const GOOGLE_OAUTH_TOKEN = 'https://oauth2.googleapis.com/token'
 
 const CALENDAR_SCOPE = [
-  'https://www.googleapis.com/auth/calendar.events'
+  'https://www.googleapis.com/auth/calendar.events',
+  'https://www.googleapis.com/auth/userinfo.email'
 ].join(' ')
 
 export function getAuthUrl({ clientId, redirectUri, state }: { clientId: string; redirectUri: string; state: string }) {
