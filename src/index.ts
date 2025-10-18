@@ -279,4 +279,7 @@ app.get('/logout', (c) => {
   return res
 })
 
+// Fallback: serve UI for any unknown route
+app.all('*', (c) => c.redirect('/'))
+
 export default app
