@@ -53,8 +53,9 @@ app.get('/auth/google', async (c) => {
   const origin = new URL(c.req.url).origin
   const redirectUri = `${origin}${redirectPath}`
   const url = getAuthUrl({ clientId: GOOGLE_CLIENT_ID, redirectUri, state })
-c.header('Set-Cookie', buildCookie('oauth_state', state, { httpOnly: true, secure: true, path: '/', maxAge: 600 }), { append: true })
-  return c.redirect(url)
+  const res = c.redirect(url)
+  res.headers.append('Set-Cookie', buildCookie('oauth_state', state, { httpOnly: true, secure: true, path: '/', maxAge: 600 }))
+  return res
 })
 
 app.get('/oauth2/callback', async (c) => {
@@ -80,9 +81,10 @@ app.get('/oauth2/callback', async (c) => {
     access_token: tokens.access_token,
     expires_in: tokens.expires_in,
   })
-c.header('Set-Cookie', buildCookie('uid', userinfo.email, { httpOnly: true, secure: true, path: '/', maxAge: 60 * 60 * 24 * 30 }), { append: true })
-  c.header('Set-Cookie', buildCookie('oauth_state', '', { httpOnly: true, secure: true, path: '/', maxAge: 0 }), { append: true })
-  return c.text('Authenticated. You can now call /api/calendar endpoints.', 200)
+  const res = c.text('Authenticated. You can now call /api/calendar endpoints.', 200)
+  res.headers.append('Set-Cookie', buildCookie('uid', userinfo.email, { httpOnly: true, secure: true, path: '/', maxAge: 60 * 60 * 24 * 30 }))
+  res.headers.append('Set-Cookie', buildCookie('oauth_state', '', { httpOnly: true, secure: true, path: '/', maxAge: 0 }))
+  return res
 })
 
 async function getValidAccessToken(DB: D1Database, email: string, clientId: string, clientSecret: string): Promise<string | null> {
