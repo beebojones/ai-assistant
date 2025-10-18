@@ -278,5 +278,6 @@ app.get('/logout', (c) => {
   res.headers.append('Set-Cookie', buildCookie('uid', '', { path: '/', maxAge: 0, httpOnly: true, secure: true }))
   return res
 })
-
+  app.all('*', (c) => c.redirect('/'))
+  export default app
 export default app
