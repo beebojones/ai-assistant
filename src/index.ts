@@ -150,4 +150,133 @@ app.post('/api/assistant/schedule', async (c) => {
   return c.json(created)
 })
 
+app.get('/', async (c) => {
+  const uid = getCookie(c.req.raw, 'uid')
+  const html = `<!DOCTYPE html>
+  <html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AI Assistant • Calendar</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+      body { font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica Neue, Arial, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji"; }
+      .glass { backdrop-filter: blur(8px); background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.08); }
+      .gradient { background: radial-gradient(1200px 600px at 10% 0%, #60a5fa22, transparent), radial-gradient(1000px 500px at 100% 0%, #f472b622, transparent), radial-gradient(800px 400px at 50% 100%, #34d39922, transparent); }
+    </style>
+  </head>
+  <body class="min-h-screen gradient text-slate-100">
+    <header class="px-6 py-4 flex items-center justify-between">
+      <div class="text-xl font-semibold">AI Assistant</div>
+      <div class="space-x-2">
+        ${uid ? `<span class="text-sm opacity-80">Signed in as ${uid}</span>` : ''}
+        <a href="/auth/google" class="px-3 py-2 rounded-md bg-blue-500 hover:bg-blue-600 text-white">${uid ? 'Re-connect Google' : 'Connect Google'}</a>
+        ${uid ? '<a href="/logout" class="px-3 py-2 rounded-md bg-slate-700 hover:bg-slate-600">Logout</a>' : ''}
+      </div>
+    </header>
+
+    <main class="max-w-5xl mx-auto p-6 grid gap-6 md:grid-cols-2">
+      <section class="glass rounded-xl p-6">
+        <h2 class="font-semibold text-lg mb-3">Natural-language scheduling</h2>
+        <label class="block text-sm mb-2">What should I schedule?</label>
+        <textarea id="query" rows="5" class="w-full rounded-md bg-slate-900/60 border border-slate-700 p-3" placeholder="Dinner with Sam Friday at 7pm for 90 minutes at Bistro"></textarea>
+        <div class="grid grid-cols-2 gap-3 mt-3">
+          <div>
+            <label class="block text-sm mb-1">Time zone</label>
+            <input id="tz" class="w-full rounded-md bg-slate-900/60 border border-slate-700 p-2" />
+          </div>
+          <div>
+            <label class="block text-sm mb-1">Default duration (minutes)</label>
+            <input id="dur" type="number" value="60" class="w-full rounded-md bg-slate-900/60 border border-slate-700 p-2" />
+          </div>
+        </div>
+        <button id="schedule" class="mt-4 px-4 py-2 rounded-md bg-emerald-500 hover:bg-emerald-600 text-white">Create event</button>
+        <pre id="result" class="mt-4 text-xs whitespace-pre-wrap"></pre>
+      </section>
+
+      <section class="glass rounded-xl p-6">
+        <h2 class="font-semibold text-lg mb-3">Upcoming week</h2>
+        <div class="flex items-center gap-2 mb-3">
+          <button id="loadEvents" class="px-3 py-2 rounded-md bg-purple-500 hover:bg-purple-600 text-white">Refresh</button>
+          <span id="status" class="text-xs opacity-75"></span>
+        </div>
+        <ul id="events" class="space-y-2 text-sm"></ul>
+      </section>
+    </main>
+
+    <script>
+      const tzInput = document.getElementById('tz');
+      tzInput.value = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+
+      const fmt = (ev) => {
+        const s = ev.start?.dateTime || ev.start?.date;
+        const e = ev.end?.dateTime || ev.end?.date;
+        return `${new Date(s).toLocaleString()} → ${new Date(e).toLocaleTimeString()} — ${ev.summary || '(no title)'}`
+      }
+
+      document.getElementById('loadEvents').onclick = async () => {
+        const status = document.getElementById('status');
+        status.textContent = 'Loading...';
+        try {
+          const res = await fetch('/api/calendar/events');
+          if (!res.ok) throw new Error('Failed to fetch events');
+          const j = await res.json();
+          const list = document.getElementById('events');
+          list.innerHTML = '';
+          (j.items || []).forEach(ev => {
+            const li = document.createElement('li');
+            li.className = 'p-3 rounded-md bg-slate-900/50 border border-slate-700';
+            li.textContent = fmt(ev);
+            list.appendChild(li);
+          });
+          status.textContent = '';
+        } catch (e) {
+          status.textContent = e.message;
+        }
+      };
+
+      document.getElementById('schedule').onclick = async () => {
+        const query = (document.getElementById('query').value || '').trim();
+        const timeZone = tzInput.value || 'UTC';
+        const defaultDurationMinutes = parseInt(document.getElementById('dur').value || '60', 10);
+        const out = document.getElementById('result');
+        out.textContent = 'Scheduling...';
+        try {
+          const res = await fetch('/api/assistant/schedule', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query, timeZone, defaultDurationMinutes })
+          });
+          const j = await res.json();
+          out.textContent = JSON.stringify(j, null, 2);
+          // refresh list
+          document.getElementById('loadEvents').click();
+        } catch (e) {
+          out.textContent = e.message;
+        }
+      };
+
+      // Auto-load events on open
+      document.getElementById('loadEvents').click();
+    </script>
+  </body>
+  </html>`
+  return c.html(html)
+})
+
+app.get('/api/me', (c) => {
+  const uid = getCookie(c.req.raw, 'uid')
+  if (!uid) return c.text('Unauthorized', 401)
+  return c.json({ email: uid })
+})
+
+app.get('/logout', (c) => {
+  const res = c.redirect('/')
+  res.headers.append('Set-Cookie', buildCookie('uid', '', { path: '/', maxAge: 0, httpOnly: true, secure: true }))
+  return res
+})
+
 export default app
