@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import { env } from 'hono/adapter'
-import { getAuthUrl, exchangeCodeForTokens, refreshAccessToken, getUserInfo, type Tokens } from './google'
+import { getAuthUrl, exchangeCodeForTokens, refreshAccessToken, getUserInfo } from './google'
 import { getUserByEmail, upsertUserByEmail } from './storage'
 import { listEvents, createEvent } from './calendar'
 import { parseEventFromText } from './ai'
@@ -34,7 +34,11 @@ function getCookie(req: Request, name: string): string | undefined {
   return undefined
 }
 
-function buildCookie(name: string, value: string, opts: { httpOnly?: boolean; secure?: boolean; path?: string; maxAge?: number } = {}) {
+function buildCookie(
+  name: string,
+  value: string,
+  opts: { httpOnly?: boolean; secure?: boolean; path?: string; maxAge?: number } = {}
+) {
   const attrs = [
     `${name}=${encodeURIComponent(value)}`,
     `Path=${opts.path ?? '/'}`,
@@ -69,14 +73,8 @@ app.get('/oauth2/callback', async (c) => {
   }
   const origin = new URL(c.req.url).origin
   const redirectUri = `${origin}${env(c).OAUTH_REDIRECT_PATH || '/oauth2/callback'}`
-  const tokens = await exchangeCodeForTokens({
-    code,
-    clientId: GOOGLE_CLIENT_ID,
-    clientSecret: GOOGLE_CLIENT_SECRET,
-    redirectUri,
-  })
+  const tokens = await exchangeCodeForTokens({ code, clientId: GOOGLE_CLIENT_ID, clientSecret: GOOGLE_CLIENT_SECRET, redirectUri })
   const userinfo = await getUserInfo(tokens.access_token)
-  // Handle case where Google does not return a refresh_token (happens after first consent)
   const existing = await getUserByEmail(DB, userinfo.email)
   const refreshToken = tokens.refresh_token || existing?.google_refresh_token
   if (!refreshToken) {
@@ -214,7 +212,7 @@ app.get('/', async (c) => {
       const fmt = (ev) => {
         const s = ev.start?.dateTime || ev.start?.date;
         const e = ev.end?.dateTime || ev.end?.date;
-        return `${new Date(s).toLocaleString()} → ${new Date(e).toLocaleTimeString()} — ${ev.summary || '(no title)'}`
+        return \`\${new Date(s).toLocaleString()} → \${new Date(e).toLocaleTimeString()} — \${ev.summary || '(no title)'}\`
       }
 
       document.getElementById('loadEvents').onclick = async () => {
@@ -252,14 +250,12 @@ app.get('/', async (c) => {
           });
           const j = await res.json();
           out.textContent = JSON.stringify(j, null, 2);
-          // refresh list
           document.getElementById('loadEvents').click();
         } catch (e) {
           out.textContent = e.message;
         }
       };
 
-      // Auto-load events on open
       document.getElementById('loadEvents').click();
     </script>
   </body>
@@ -281,6 +277,5 @@ app.get('/logout', (c) => {
 
 // Fallback: serve UI for any unknown route
 app.all('*', (c) => c.redirect('/'))
-  app.all('*', (c) => c.redirect('/'))
-  export default app
+
 export default app
