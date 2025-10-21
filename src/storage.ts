@@ -22,19 +22,16 @@ export async function upsertUserByEmail(
 ): Promise<void> {
   const now = Math.floor(Date.now() / 1000)
   const expiresAt = now + (tokens.expires_in || 3600)
-  const existing = await getUserByEmail(DB, email)
-  if (existing) {
-    await DB.prepare(
-      'UPDATE users SET google_refresh_token = ?, google_access_token = ?, google_access_token_expires_at = ? WHERE email = ?'
-    )
-      .bind(tokens.refresh_token || existing.google_refresh_token, tokens.access_token, expiresAt, email)
-      .run()
-  } else {
-    const id = crypto.randomUUID()
-    await DB.prepare(
-      'INSERT INTO users (id, email, google_refresh_token, google_access_token, google_access_token_expires_at) VALUES (?, ?, ?, ?, ?)'
-    )
-      .bind(id, email, tokens.refresh_token, tokens.access_token, expiresAt)
-      .run()
-  }
+  const id = crypto.randomUUID()
+  // Use SQLite UPSERT to avoid UNIQUE conflicts on email
+  await DB.prepare(
+    `INSERT INTO users (id, email, google_refresh_token, google_access_token, google_access_token_expires_at)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(email) DO UPDATE SET
+       google_refresh_token = excluded.google_refresh_token,
+       google_access_token = excluded.google_access_token,
+       google_access_token_expires_at = excluded.google_access_token_expires_at`
+  )
+    .bind(id, email, tokens.refresh_token, tokens.access_token, expiresAt)
+    .run()
 }
