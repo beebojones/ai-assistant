@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import { env } from 'hono/adapter'
 import { getAuthUrl, exchangeCodeForTokens, refreshAccessToken, getUserInfo } from './google'
-import { getUserByEmail, upsertUserByEmail } from './storage'
+import { getUserByEmail, upsertUserByEmail, createAppSession, getSessionEmail } from './storage'
 import { listEvents, createEvent } from './calendar'
 import { parseEventFromText } from './ai'
 
@@ -50,6 +50,18 @@ function buildCookie(
   return attrs.join('; ')
 }
 
+// Mobile entry: set app_flow and return_to, then reuse the normal /auth/google flow
+app.get('/mobile/start', async (c) => {
+  const urlObj = new URL(c.req.url)
+  const returnTo = urlObj.searchParams.get('return_to') || ''
+  const res = c.redirect('/auth/google')
+  if (returnTo) {
+    res.headers.append('Set-Cookie', buildCookie('return_to', encodeURIComponent(returnTo), { httpOnly: true, secure: true, path: '/', maxAge: 600 }))
+  }
+  res.headers.append('Set-Cookie', buildCookie('app_flow', '1', { httpOnly: true, secure: true, path: '/', maxAge: 600 }))
+  return res
+})
+
 app.get('/auth/google', async (c) => {
   const { GOOGLE_CLIENT_ID } = env(c)
   const redirectPath = env(c).OAUTH_REDIRECT_PATH || '/oauth2/callback'
@@ -59,6 +71,25 @@ app.get('/auth/google', async (c) => {
   const url = getAuthUrl({ clientId: GOOGLE_CLIENT_ID, redirectUri, state })
   const res = c.redirect(url)
   res.headers.append('Set-Cookie', buildCookie('oauth_state', state, { httpOnly: true, secure: true, path: '/', maxAge: 600 }))
+  return res
+})
+
+// Mobile auth entry: launches same Google flow but marks as app flow
+app.get('/mobile/auth/google', async (c) => {
+  const { GOOGLE_CLIENT_ID } = env(c)
+  const redirectPath = env(c).OAUTH_REDIRECT_PATH || '/oauth2/callback'
+  const state = randomState()
+  const origin = new URL(c.req.url).origin
+  const redirectUri = `${origin}${redirectPath}`
+  const url = getAuthUrl({ clientId: GOOGLE_CLIENT_ID, redirectUri, state })
+  const res = c.redirect(url)
+  const urlObj = new URL(c.req.url)
+  const returnTo = urlObj.searchParams.get('return_to') || ''
+  res.headers.append('Set-Cookie', buildCookie('oauth_state', state, { httpOnly: true, secure: true, path: '/', maxAge: 600 }))
+  res.headers.append('Set-Cookie', buildCookie('app_flow', '1', { httpOnly: true, secure: true, path: '/', maxAge: 600 }))
+  if (returnTo) {
+    res.headers.append('Set-Cookie', buildCookie('return_to', encodeURIComponent(returnTo), { httpOnly: true, secure: true, path: '/', maxAge: 600 }))
+  }
   return res
 })
 
@@ -85,10 +116,22 @@ app.get('/oauth2/callback', async (c) => {
     access_token: tokens.access_token,
     expires_in: tokens.expires_in,
   })
-  const res = c.text('Authenticated. You can now call /api/calendar endpoints.', 200)
-  res.headers.append('Set-Cookie', buildCookie('uid', userinfo.email, { httpOnly: true, secure: true, path: '/', maxAge: 60 * 60 * 24 * 30 }))
-  res.headers.append('Set-Cookie', buildCookie('oauth_state', '', { httpOnly: true, secure: true, path: '/', maxAge: 0 }))
-  return res
+  const isAppFlow = getCookie(c.req.raw, 'app_flow') === '1'
+  if (isAppFlow) {
+    const token = await createAppSession(DB, userinfo.email, 10 * 60)
+    const returnTo = getCookie(c.req.raw, 'return_to')
+    const target = returnTo ? decodeURIComponent(returnTo) + (returnTo.includes('?') ? `&token=${token}` : `?token=${token}`) : `/mobile/done?token=${token}`
+    const res = c.redirect(target)
+    res.headers.append('Set-Cookie', buildCookie('oauth_state', '', { httpOnly: true, secure: true, path: '/', maxAge: 0 }))
+    res.headers.append('Set-Cookie', buildCookie('app_flow', '', { httpOnly: true, secure: true, path: '/', maxAge: 0 }))
+    res.headers.append('Set-Cookie', buildCookie('return_to', '', { httpOnly: true, secure: true, path: '/', maxAge: 0 }))
+    return res
+  } else {
+    const res = c.text('Authenticated. You can now call /api/calendar endpoints.', 200)
+    res.headers.append('Set-Cookie', buildCookie('uid', userinfo.email, { httpOnly: true, secure: true, path: '/', maxAge: 60 * 60 * 24 * 30 }))
+    res.headers.append('Set-Cookie', buildCookie('oauth_state', '', { httpOnly: true, secure: true, path: '/', maxAge: 0 }))
+    return res
+  }
 })
 
 async function getValidAccessToken(DB: D1Database, email: string, clientId: string, clientSecret: string): Promise<string | null> {
@@ -105,7 +148,7 @@ async function getValidAccessToken(DB: D1Database, email: string, clientId: stri
 
 app.get('/api/calendar/events', async (c) => {
   const { DB, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET } = env(c)
-  const uid = getCookie(c.req.raw, 'uid')
+  const uid = await getUidFromRequest(c)
   if (!uid) return c.text('Unauthorized', 401)
   const accessToken = await getValidAccessToken(DB, uid, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET)
   if (!accessToken) return c.text('No tokens. Re-auth at /auth/google', 401)
@@ -118,7 +161,7 @@ app.get('/api/calendar/events', async (c) => {
 
 app.post('/api/calendar/events', async (c) => {
   const { DB, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET } = env(c)
-  const uid = getCookie(c.req.raw, 'uid')
+  const uid = await getUidFromRequest(c)
   if (!uid) return c.text('Unauthorized', 401)
   const accessToken = await getValidAccessToken(DB, uid, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET)
   if (!accessToken) return c.text('No tokens. Re-auth at /auth/google', 401)
@@ -129,7 +172,7 @@ app.post('/api/calendar/events', async (c) => {
 
 app.post('/api/assistant/schedule', async (c) => {
   const { DB, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, OPENAI_API_KEY, OPENAI_MODEL } = env(c)
-  const uid = getCookie(c.req.raw, 'uid')
+  const uid = await getUidFromRequest(c)
   if (!uid) return c.text('Unauthorized', 401)
   const accessToken = await getValidAccessToken(DB, uid, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET)
   if (!accessToken) return c.text('No tokens. Re-auth at /auth/google', 401)
@@ -263,8 +306,30 @@ app.get('/', async (c) => {
   return c.html(html)
 })
 
-app.get('/api/me', (c) => {
-  const uid = getCookie(c.req.raw, 'uid')
+app.get('/mobile/done', (c) => {
+  const url = new URL(c.req.url)
+  const token = url.searchParams.get('token')
+  const body = `<!doctype html><meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <style>body{font-family:system-ui,sans-serif;padding:24px;background:#0b1220;color:#e5e7eb} .card{max-width:680px;margin:auto;padding:20px;border:1px solid #334155;border-radius:12px;background:#0f172a}</style>
+  <div class="card"><h1>Connected</h1><p>You can close this window and return to the app.</p><pre>${token ? 'token=' + token : ''}</pre></div>`
+  return c.html(body)
+})
+
+async function getUidFromRequest(c: any): Promise<string | null> {
+  const { DB } = env(c)
+  const cookieUid = getCookie(c.req.raw, 'uid')
+  if (cookieUid) return cookieUid
+  const auth = c.req.header('Authorization') || c.req.header('authorization')
+  if (auth && auth.startsWith('Bearer ')) {
+    const token = auth.slice('Bearer '.length).trim()
+    const email = await getSessionEmail(DB, token)
+    if (email) return email
+  }
+  return null
+}
+
+app.get('/api/me', async (c) => {
+  const uid = await getUidFromRequest(c)
   if (!uid) return c.text('Unauthorized', 401)
   return c.json({ email: uid })
 })
@@ -274,8 +339,5 @@ app.get('/logout', (c) => {
   res.headers.append('Set-Cookie', buildCookie('uid', '', { path: '/', maxAge: 0, httpOnly: true, secure: true }))
   return res
 })
-
-// Fallback: serve UI for any unknown route
-app.all('*', (c) => c.redirect('/'))
 
 export default app
